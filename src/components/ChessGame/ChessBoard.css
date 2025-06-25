@@ -1,0 +1,121 @@
+/* --- START OF FILE ChessBoard.css --- */
+
+.chess-board-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.turn-indicator {
+  font-size: 2em;
+  margin-bottom: 20px;
+  font-weight: bold;
+  font-family: 'Pacifico', cursive;
+}
+
+.turn-indicator.red { color: #d81b60; }
+.turn-indicator.black { color: #333; }
+
+.chess-board {
+  display: grid;
+  grid-template-columns: repeat(9, 60px); /* 9 列交叉点 */
+  grid-template-rows: repeat(10, 60px);    /* 10 行交叉点 */
+  width: 540px;  /* 9 * 60px */
+  height: 600px; /* 10 * 60px */
+  background-color: #ffe4b5; /* 棋盘米黄色背景 */
+  border: 5px solid #8b4513; /* 深棕色外边框 */
+  position: relative;
+  /* 
+    新的SVG背景图：
+    - 棋盘线画在每个逻辑方格的中心，形成交叉点。
+    - 整体尺寸 540x600。
+    - 每个逻辑方格 (交叉点区域) 60x60px。
+    - 线条的绘制从 (30,30) 开始，即第一个交叉点在第一个逻辑方格的中心。
+    -  playing_area_width = (9-1)*60 = 480
+    - playing_area_height = (10-1)*60 = 540
+  */
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg width='540' height='600' xmlns='http://www.w3.org/2000/svg'%3e%3c!-- 棋盘区域外框 (深色) --%3e%3crect x='30' y='30' width='480' height='540' fill='none' stroke='%23a0522d' stroke-width='2'/%3e%3c!-- 水平线 (内部，浅色) --%3e%3cpath d='M30 90H510 M30 150H510 M30 210H510 M30 270H510 M30 330H510 M30 390H510 M30 450H510 M30 510H510' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c!-- 垂直线 (内部，浅色，避开楚河汉界) --%3e%3cpath d='M90 30V270 M90 330V570 M150 30V270 M150 330V570 M210 30V270 M210 330V570 M270 30V270 M270 330V570 M330 30V270 M330 330V570 M390 30V270 M390 330V570 M450 30V270 M450 330V570' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c!-- 楚河汉界文字 --%3e%3ctext x='150' y='312' font-size='30' font-family='KaiTi, STKaiti' fill='%238b4513' text-anchor='middle' dominant-baseline='middle'%3e楚 河%3c/text%3e%3ctext x='390' y='312' font-size='30' font-family='KaiTi, STKaiti' fill='%238b4513' text-anchor='middle' dominant-baseline='middle'%3e漢 界%3c/text%3e%3c!-- 九宫格线 (浅色) --%3e%3cpath d='M210 30L330 150 M330 30L210 150' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3cpath d='M210 450L330 570 M330 450L210 570' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c/svg%3e");
+  background-size: 540px 600px;
+  background-repeat: no-repeat;
+}
+
+.square {
+  width: 60px;
+  height: 60px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  /* outline: 1px dashed rgba(0,0,0,0.1); */ /* 用于调试对齐，可移除 */
+}
+
+.piece {
+  width: 52px;  /* 略微缩小棋子，使其更好地位于交叉点上 */
+  height: 52px; /* 略微缩小棋子 */
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 30px; /* 配合棋子大小调整字体 */
+  font-weight: bold;
+  font-family: 'KaiTi', 'STKaiti', serif; /* 楷体 */
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+  transition: transform 0.2s, box-shadow 0.2s;
+  box-sizing: border-box; /* 边框包含在宽高内 */
+}
+
+.piece.red {
+  background-color: #fddde2;
+  color: #c70025;
+  border: 2px solid #c70025;
+}
+
+.piece.black {
+  background-color: #e0e0e0;
+  color: #111;
+  border: 2px solid #111;
+}
+
+/* 选中棋子的样式 */
+.square.selected .piece {
+  transform: translateY(-5px);
+  box-shadow: 0 6px 12px rgba(216, 27, 96, 0.5);
+  border-color: #d81b60; /* 使用主题强调色 */
+}
+
+/* 可以移动到的位置高亮提示 */
+.square.highlight::after {
+  content: '';
+  width: 20px; /* 高亮标记大小 */
+  height: 20px; /* 高亮标记大小 */
+  background-color: rgba(63, 224, 143, 0.7);
+  border-radius: 50%;
+  position: absolute; 
+  /* 已经在 .square 中通过 flex 居中，无需额外定位 */
+}
+
+.reset-button {
+  margin-top: 20px;
+  padding: 12px 24px;
+  font-size: 1.2em; 
+  font-family: 'Pacifico', cursive; 
+  color: white;
+  background-color: #ff80ab; 
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  transition: background-color 0.3s ease, transform 0.2s ease; 
+}
+
+.reset-button:hover {
+  background-color: #ffb6c1; 
+  transform: scale(1.05); 
+}
+
+.reset-button:active {
+  transform: scale(0.98);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* --- END OF FILE ChessBoard.css --- */
