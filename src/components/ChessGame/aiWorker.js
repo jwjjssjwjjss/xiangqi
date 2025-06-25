@@ -5,7 +5,7 @@ import { PIECE_COLOR, PIECE_TYPES, generateLegalMoves } from './gameLogic.js'; /
 import { getCloudMove, boardToFen } from './cloudMoveFetcher.js';
 import { getLocalEngineMove, initializePieceTables } from './localEngine.js';
 
-const CLOUD_API_TIMEOUT_EARLY_GAME = 2000; // 开局云端超时时间
+const CLOUD_API_TIMEOUT_PRIMARY_ATTEMPT = 2000; // 云端主要尝试超时时间 (formerly CLOUD_API_TIMEOUT_EARLY_GAME)
 const LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS = 1000; // 如果云端失败，本地引擎至少思考1秒
 
 // -------------------------------------------------------------------
@@ -24,135 +24,48 @@ async function findBestMove(board, currentColor, plyCount) {
     // in case it performs any speculative modifications.
     const boardCopyForValidation = board.map(row => row.map(p => p ? {...p} : null));
 
-    const EARLY_GAME_PLY_THRESHOLD = 2000;
+    console.log(`AI Worker: Prioritizing Cloud move with timeout ${CLOUD_API_TIMEOUT_PRIMARY_ATTEMPT}ms.`);
+    
+    let cloudMove = null;
+    let cloudError = null;
+    try {
+        cloudMove = await getCloudMove(fen, boardCopyForValidation, currentColor, CLOUD_API_TIMEOUT_PRIMARY_ATTEMPT);
+    } catch (error) {
+        cloudError = error;
+        console.error(`AI Worker: Error during getCloudMove (Ply ${plyCount}):`, error);
+    }
 
-    if (plyCount < EARLY_GAME_PLY_THRESHOLD) {
-        console.log(`AI Worker: Ply ${plyCount} < ${EARLY_GAME_PLY_THRESHOLD}. Prioritizing Cloud move with timeout ${CLOUD_API_TIMEOUT_EARLY_GAME}ms.`);
-        
-        let cloudMove = null;
-        let cloudError = null;
-        try {
-            cloudMove = await getCloudMove(fen, boardCopyForValidation, currentColor, CLOUD_API_TIMEOUT_EARLY_GAME);
-        } catch (error) {
-            cloudError = error;
-            console.error(`AI Worker: Error during getCloudMove in early game (Ply ${plyCount}):`, error);
-        }
-
-        if (cloudMove) {
-            finalMove = cloudMove;
-            moveSource = "Cloud (Early Game)";
-            console.log("AI Worker: Using Cloud move (Early Game).");
+    if (cloudMove) {
+        finalMove = cloudMove;
+        moveSource = "Cloud";
+        console.log("AI Worker: Using Cloud move.");
+    } else {
+        // Cloud move failed or errored, fallback to local engine
+        if (cloudError) {
+            console.warn(`AI Worker: Cloud move errored (Ply ${plyCount}). Falling back to local engine with ${LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS}ms min think time.`);
         } else {
-            // Cloud move failed or errored, fallback to local engine
-            if (cloudError) {
-                console.warn(`AI Worker: Cloud move errored in early game (Ply ${plyCount}). Falling back to local engine with ${LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS}ms min think time.`);
-            } else {
-                console.warn(`AI Worker: Cloud move not found/timeout in early game (Ply ${plyCount}). Falling back to local engine with ${LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS}ms min think time.`);
-            }
-            
-            const localEngineStartTime = Date.now();
-            // Use the 'board' (which is the copy from onmessage) for local engine
-            const localFallbackMove = await getLocalEngineMove(board, currentColor, overallStartTime);
-            const localEngineDuration = Date.now() - localEngineStartTime;
-            
-            const delayNeeded = Math.max(0, LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS - localEngineDuration);
-            if (delayNeeded > 0) {
-                console.log(`AI Worker: Local engine (early game fallback) computed in ${localEngineDuration}ms. Waiting an additional ${delayNeeded}ms.`);
-                await new Promise(resolve => setTimeout(resolve, delayNeeded));
-            }
-
-            if (localFallbackMove) {
-                finalMove = localFallbackMove;
-                moveSource = cloudError ? "Local (Early Game Cloud Error)" : "Local (Early Game Cloud Failed)";
-                console.log(`AI Worker: Using Local move from early game fallback. Local compute: ${localEngineDuration}ms. Total effective local processing time: ${localEngineDuration + delayNeeded}ms.`);
-            } else {
-                console.warn("AI Worker: Local engine also failed to find a move in early game fallback.");
-                // finalMove remains null, will proceed to ultimate fallback logic
-            }
+            console.warn(`AI Worker: Cloud move not found/timeout (Ply ${plyCount}). Falling back to local engine with ${LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS}ms min think time.`);
         }
-    } else { // Mid/Late Game
-        console.log(`AI Worker: Ply ${plyCount} >= ${EARLY_GAME_PLY_THRESHOLD}. Running local engine and attempting cloud concurrently.`);
         
-        const defaultCloudTimeout = 800; // Consistent with cloudMoveFetcher.js default if not overridden
-
-        const cloudMovePromise = getCloudMove(fen, boardCopyForValidation, currentColor, defaultCloudTimeout)
-            .then(move => ({ source: 'cloud', move: move, error: null }))
-            .catch(error => ({ source: 'cloud', move: null, error: error }));
-
         const localEngineStartTime = Date.now();
-        const localEngineMovePromise = getLocalEngineMove(board, currentColor, overallStartTime) 
-            .then(move => ({ source: 'local', move: move, error: null, startTime: localEngineStartTime, endTime: Date.now() }))
-            .catch(error => {
-                console.error('AI Worker: Local engine promise rejected:', error);
-                return { source: 'local', move: null, error: error, startTime: localEngineStartTime, endTime: Date.now() };
-            });
-
-        // Await local engine first. Its result is crucial if cloud is slow or fails.
-        const localResult = await localEngineMovePromise;
-        const localEngineDuration = localResult.endTime - localResult.startTime;
+        // Use the 'board' (which is the copy from onmessage) for local engine
+        const localFallbackMove = await getLocalEngineMove(board, currentColor, overallStartTime);
+        const localEngineDuration = Date.now() - localEngineStartTime;
         
-        // After local engine finishes, give cloud a small grace period to respond if it hasn't already.
-        const GRACE_PERIOD_FOR_CLOUD_MS = 50; 
-        const cloudResultOutcome = await Promise.race([
-            cloudMovePromise,
-            new Promise(resolve => setTimeout(() => resolve({ source: 'timeout_grace_period', move: null, error: new Error("Cloud grace period expired") }), GRACE_PERIOD_FOR_CLOUD_MS))
-        ]);
+        const delayNeeded = Math.max(0, LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS - localEngineDuration);
+        if (delayNeeded > 0) {
+            console.log(`AI Worker: Local engine (fallback) computed in ${localEngineDuration}ms. Waiting an additional ${delayNeeded}ms.`);
+            await new Promise(resolve => setTimeout(resolve, delayNeeded));
+        }
 
-        if (cloudResultOutcome.source === 'cloud' && cloudResultOutcome.move) {
-            console.log("AI Worker: Cloud responded within local_finish_time + grace_period with a valid move. Prioritizing Cloud.");
-            finalMove = cloudResultOutcome.move;
-            moveSource = "Cloud (Mid/Late Game)";
+        if (localFallbackMove) {
+            finalMove = localFallbackMove;
+            moveSource = cloudError ? "Local (Cloud Error Fallback)" : "Local (Cloud Failed/Timeout Fallback)";
+            console.log(`AI Worker: Using Local move from fallback. Local compute: ${localEngineDuration}ms. Total effective local processing time: ${localEngineDuration + delayNeeded}ms.`);
         } else {
-            // Cloud didn't provide a timely, valid move.
-            // (cloudResultOutcome.source might be 'cloud' with move:null/error, or 'timeout_grace_period')
-            if (cloudResultOutcome.source === 'cloud' && !cloudResultOutcome.move) {
-                 console.log("AI Worker: Cloud responded within grace period but had no valid move or an error. Attempting to use Local.");
-            } else if (cloudResultOutcome.source === 'timeout_grace_period') {
-                 console.log("AI Worker: Cloud did not respond within local_finish_time + grace_period. Attempting to use Local.");
-            }
-            
-            if (localResult.move) {
-                // Using local move because cloud path wasn't chosen. Apply 1-second min think time.
-                console.log(`AI Worker: Local engine move selected. Local compute took ${localEngineDuration}ms.`);
-                const delayNeeded = Math.max(0, LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS - localEngineDuration);
-                if (delayNeeded > 0) {
-                    console.log(`AI Worker: Waiting an additional ${delayNeeded}ms for local engine to meet ${LOCAL_ENGINE_FALLBACK_MIN_THINK_TIME_MS}ms minimum.`);
-                    await new Promise(resolve => setTimeout(resolve, delayNeeded));
-                }
-                finalMove = localResult.move;
-                moveSource = "Local (Cloud Slow/Failed/None or Local Preferred)";
-                console.log(`AI Worker: Using Local move from mid/late game. Local compute: ${localEngineDuration}ms. Total effective local processing time: ${localEngineDuration + delayNeeded}ms.`);
-            } else { // Local engine also failed
-                finalMove = null; 
-                moveSource = "None (Local Failed & Cloud Slow/Failed/None)";
-                console.warn("AI Worker: Local engine failed to find a move.");
-
-                // Check if the original cloud promise (which might have been slow and lost the race) eventually found a move
-                const finalCloudSettledResult = await cloudMovePromise; 
-                if (finalCloudSettledResult.move) {
-                    console.log("AI Worker: Local failed, but cloud (potentially late) responded with a move. Using this cloud move.");
-                    finalMove = finalCloudSettledResult.move;
-                    moveSource = "Cloud (Mid/Late Game - Late, Local Failed)";
-                } else {
-                     console.warn("AI Worker: Cloud (even if late) also did not provide a usable move.");
-                     if(finalCloudSettledResult.error) console.error("AI Worker: Late cloud error:", finalCloudSettledResult.error);
-                }
-            }
-            
-            // If cloud timed out the grace period, ensure its promise is settled and log if it had a late move not used.
-            if (cloudResultOutcome.source === 'timeout_grace_period') {
-                cloudMovePromise.then(finalCloudResultFromTimeoutPath => {
-                    if (finalCloudResultFromTimeoutPath.move && finalMove !== finalCloudResultFromTimeoutPath.move) { 
-                        console.log("AI Worker: Cloud (late after grace period) also responded with move, but another move was chosen or no move was made. Cached (if valid).", finalCloudResultFromTimeoutPath.move);
-                    } else if (!finalCloudResultFromTimeoutPath.move && finalCloudResultFromTimeoutPath.error) {
-                        // This log might be redundant if the error was already captured by awaiting finalCloudSettledResult above
-                        // console.warn("AI Worker: Cloud (late after grace period) responded with error.", finalCloudResultFromTimeoutPath.error);
-                    }
-                }).catch(e => {
-                    // Catch potential unhandled rejection if cloudMovePromise was not awaited elsewhere and rejects late.
-                    console.warn("AI Worker: Error observed while settling late cloud promise:", e.message);
-                });
-            }
+            console.warn(`AI Worker: Local engine also failed to find a move in fallback (Ply ${plyCount}).`);
+            moveSource = "None (Cloud and Local Failed)"; 
+            // finalMove remains null, will proceed to ultimate fallback logic
         }
     }
     
@@ -185,7 +98,15 @@ async function findBestMove(board, currentColor, plyCount) {
         const legalMoves = generateLegalMoves(fallbackBoard, currentColor);
         if (legalMoves.length > 0) {
             finalMove = legalMoves[0]; // Pick the first legal move
-            moveSource = moveSource.includes("Fallback!") ? moveSource : "Fallback (First Legal)";
+            
+            if (moveSource.includes("(Illegal, Fallback!)")) {
+                // Keep the original source info if it was an illegal move that led here
+            } else if (moveSource === "None (Cloud and Local Failed)") {
+                moveSource = "Fallback (First Legal after Cloud/Local Fail)";
+            } else {
+                 moveSource = "Fallback (First Legal)";
+            }
+            
             console.log("AI Worker: Using first legal move as ultimate fallback:", finalMove);
             preFetchNextMoves(board, currentColor, finalMove, plyCount + 1);
         } else {
