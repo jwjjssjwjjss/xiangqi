@@ -4,6 +4,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 100%; /* 确保容器可以撑满父级宽度，以便棋盘的百分比宽度生效 */
+  padding: 10px 0; /* 给上下一些间距 */
 }
 
 .turn-indicator {
@@ -18,30 +20,45 @@
 
 .chess-board {
   display: grid;
-  grid-template-columns: repeat(9, 60px); /* 9 列交叉点 */
-  grid-template-rows: repeat(10, 60px);    /* 10 行交叉点 */
-  width: 540px;  /* 9 * 60px */
-  height: 600px; /* 10 * 60px */
-  background-color: #ffe4b5; /* 棋盘米黄色背景 */
-  border: 5px solid #8b4513; /* 深棕色外边框 */
-  position: relative;
-  /* 
-    新的SVG背景图：
-    - 棋盘线画在每个逻辑方格的中心，形成交叉点。
-    - 整体尺寸 540x600。
-    - 每个逻辑方格 (交叉点区域) 60x60px。
-    - 线条的绘制从 (30,30) 开始，即第一个交叉点在第一个逻辑方格的中心。
-    -  playing_area_width = (9-1)*60 = 480
-    - playing_area_height = (10-1)*60 = 540
+  /* 棋盘原始宽高比 540 / 600 = 9 / 10 */
+  aspect-ratio: 9 / 10;
+
+  /*
+    响应式宽度设置：
+    - width: 90vw; (90% 的视口宽度)
+    - max-width: 540px; (最大不超过原始设计宽度)
+    - 也可以用 clamp() 来设置一个最小、理想和最大宽度，例如:
+      width: clamp(280px, 90vw, 540px);
+      这里我们采用 width: 90%; max-width: 540px; 配合父容器的 align-items: center 来居中
   */
+  width: 90%; /* 占据父容器宽度的90% */
+  max-width: 540px; /* 但最大不超过540px */
+  /* height 将由 aspect-ratio 和 width 自动计算 */
+
+  grid-template-columns: repeat(9, 1fr); /* 9 列，每列占据可用空间的1份 */
+  grid-template-rows: repeat(10, 1fr);   /* 10 行，每行占据可用空间的1份 */
+
+  background-color: #ffe4b5;
+  border: 5px solid #8b4513;
+  position: relative;
+  /* SVG 背景图保持不变 */
   background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg width='540' height='600' xmlns='http://www.w3.org/2000/svg'%3e%3c!-- 棋盘区域外框 (深色) --%3e%3crect x='30' y='30' width='480' height='540' fill='none' stroke='%23a0522d' stroke-width='2'/%3e%3c!-- 水平线 (内部，浅色) --%3e%3cpath d='M30 90H510 M30 150H510 M30 210H510 M30 270H510 M30 330H510 M30 390H510 M30 450H510 M30 510H510' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c!-- 垂直线 (内部，浅色，避开楚河汉界) --%3e%3cpath d='M90 30V270 M90 330V570 M150 30V270 M150 330V570 M210 30V270 M210 330V570 M270 30V270 M270 330V570 M330 30V270 M330 330V570 M390 30V270 M390 330V570 M450 30V270 M450 330V570' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c!-- 楚河汉界文字 --%3e%3ctext x='150' y='312' font-size='30' font-family='KaiTi, STKaiti' fill='%238b4513' text-anchor='middle' dominant-baseline='middle'%3e楚 河%3c/text%3e%3ctext x='390' y='312' font-size='30' font-family='KaiTi, STKaiti' fill='%238b4513' text-anchor='middle' dominant-baseline='middle'%3e漢 界%3c/text%3e%3c!-- 九宫格线 (浅色) --%3e%3cpath d='M210 30L330 150 M330 30L210 150' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3cpath d='M210 450L330 570 M330 450L210 570' fill='none' stroke='%23d2b48c' stroke-width='1'/%3e%3c/svg%3e");
-  background-size: 540px 600px;
+
+  /*
+    关键改动：确保背景图缩放以适应容器，并保持其宽高比。
+    `contain` 会保证整个图片可见。
+    如果容器的 aspect-ratio 和图片的 aspect-ratio 一致，`100% 100%` 也可以。
+  */
+  background-size: contain; /* 或者 100% 100%，因为容器 aspect-ratio 已设置 */
+  background-position: center center; /* 配合 contain 使用，确保居中 */
   background-repeat: no-repeat;
 }
 
 .square {
-  width: 60px;
-  height: 60px;
+  /*
+    宽度和高度由 .chess-board 的 grid 定义 (1fr) 自动分配，
+    无需再设置固定的 60px。
+  */
   display: flex;
   justify-content: center;
   align-items: center;
@@ -50,24 +67,38 @@
 }
 
 .piece {
-  width: 52px;  /* 略微缩小棋子，使其更好地位于交叉点上 */
-  height: 52px; /* 略微缩小棋子 */
+  /*
+    棋子大小相对于其所在的 .square 进行调整。
+    原始：棋子52px，格子60px => 52/60 = 0.8666... 约等于 86% 或 87%
+  */
+  width: 86%;
+  height: 86%;
   border-radius: 50%;
   display: flex;
   justify-content: center;
   align-items: center;
-  font-size: 30px; /* 配合棋子大小调整字体 */
+
+  /*
+    响应式字体大小：
+    使用 clamp(MIN, PREFERRED, MAX)
+    MIN: 最小字号，例如 14px
+    PREFERRED: 随视口变化的理想字号，例如 4vw (4% 的视口宽度) 或 3.5vmin (3.5% 的视口最小边)
+    MAX: 最大字号，例如原始的 30px
+  */
+  font-size: clamp(14px, 4vw, 30px);
+  /* 或者一个简单的 vmin/vw 值，例如 font-size: 3.5vmin; */
+
   font-weight: bold;
-  font-family: 'KaiTi', 'STKaiti', serif; /* 楷体 */
+  font-family: 'KaiTi', 'STKaiti', serif;
   box-shadow: 0 2px 4px rgba(0,0,0,0.4);
   transition: transform 0.2s, box-shadow 0.2s;
-  box-sizing: border-box; /* 边框包含在宽高内 */
+  box-sizing: border-box;
 }
 
 .piece.red {
   background-color: #fddde2;
   color: #c70025;
-  border: 2px solid #c70025;
+  border: 2px solid #c70025; /* 边框粗细可以考虑用更细的单位或也做响应式调整，但2px通常可接受 */
 }
 
 .piece.black {
@@ -76,41 +107,41 @@
   border: 2px solid #111;
 }
 
-/* 选中棋子的样式 */
 .square.selected .piece {
-  transform: translateY(-5px);
+  transform: translateY(-8%); /* 使用百分比使其位移也相对棋子大小缩放 */
   box-shadow: 0 6px 12px rgba(216, 27, 96, 0.5);
-  border-color: #d81b60; /* 使用主题强调色 */
+  border-color: #d81b60;
 }
 
-/* 可以移动到的位置高亮提示 */
 .square.highlight::after {
   content: '';
-  width: 20px; /* 高亮标记大小 */
-  height: 20px; /* 高亮标记大小 */
+  /* 高亮标记大小也应该响应式，例如基于棋子大小的百分比或vmin */
+  width: clamp(10px, 2.5vw, 20px); /* 动态调整高亮标记大小 */
+  height: clamp(10px, 2.5vw, 20px);
   background-color: rgba(63, 224, 143, 0.7);
   border-radius: 50%;
-  position: absolute; 
-  /* 已经在 .square 中通过 flex 居中，无需额外定位 */
+  position: absolute;
+  /* 通过 .square 的 flex 居中，通常无需额外定位，但如果棋子本身不是100%填充square，
+     这个::after是直接添加到.square的，所以它会在.square的中心。*/
 }
 
 .reset-button {
   margin-top: 20px;
   padding: 12px 24px;
-  font-size: 1.2em; 
-  font-family: 'Pacifico', cursive; 
+  font-size: 1.2em;
+  font-family: 'Pacifico', cursive;
   color: white;
-  background-color: #ff80ab; 
+  background-color: #ff80ab;
   border: none;
   border-radius: 12px;
   cursor: pointer;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  transition: background-color 0.3s ease, transform 0.2s ease; 
+  transition: background-color 0.3s ease, transform 0.2s ease;
 }
 
 .reset-button:hover {
-  background-color: #ffb6c1; 
-  transform: scale(1.05); 
+  background-color: #ffb6c1;
+  transform: scale(1.05);
 }
 
 .reset-button:active {
