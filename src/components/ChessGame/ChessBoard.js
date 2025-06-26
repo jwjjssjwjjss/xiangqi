@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getInitialBoard, generateLegalMoves, PIECE_COLOR, isKingInCheck } from './gameLogic';
+// Import Zobrist functions from localEngine (or a shared utility if refactored)
+import { initZobristForLocalEngine, computeZobristKeyForLocalEngine } from './localEngine'; 
 import './ChessBoard.css';
 
 function ChessBoard() {
@@ -11,60 +13,100 @@ function ChessBoard() {
   const [possibleMoves, setPossibleMoves] = useState([]);
   const [isAiThinking, setIsAiThinking] = useState(false);
   const [gameOver, setGameOver] = useState('');
-  const [plyCount, setPlyCount] = useState(0); // 新增 plyCount 状态
+  const [plyCount, setPlyCount] = useState(0);
+  // State for repetition history: Map<ZobristKey (BigInt), Count (number)>
+  const [repetitionHistory, setRepetitionHistory] = useState(new Map());
 
   const aiWorkerRef = useRef(null);
 
+  // Initialize Zobrist table and set initial board repetition count
+  useEffect(() => {
+    initZobristForLocalEngine(); // Initialize Zobrist table globally (idempotent)
+    const initialBoardKey = computeZobristKeyForLocalEngine(getInitialBoard());
+    setRepetitionHistory(prevMap => {
+        const newMap = new Map(prevMap); // prevMap should be empty initially
+        newMap.set(initialBoardKey, 1);
+        return newMap;
+    });
+  }, []); // Runs once on mount
+
+
+  const checkForRepetitionDraw = useCallback((currentBoardKey, history) => {
+    const count = history.get(currentBoardKey) || 0;
+    if (count >= 5) {
+      setGameOver('和棋（5次重复局面）！');
+      setTimeout(() => alert('和棋（5次重复局面）！'), 10);
+      return true;
+    }
+    return false;
+  }, []); // setGameOver is stable
+
   const movePiece = useCallback((from, to) => {
+    let newBoardKey; // To store the Zobrist key of the board *after* the move
     setBoard(prevBoard => {
       const newBoard = prevBoard.map(row => [...row]);
       newBoard[to.y][to.x] = newBoard[from.y][from.x];
       newBoard[from.y][from.x] = null;
+      newBoardKey = computeZobristKeyForLocalEngine(newBoard); // Compute key for new board state
       return newBoard;
     });
     setSelectedPiece(null);
     setPossibleMoves([]);
+    
+    // Update repetition history
+    setRepetitionHistory(prevHistory => {
+        const newHistory = new Map(prevHistory);
+        const currentCount = newHistory.get(newBoardKey) || 0;
+        newHistory.set(newBoardKey, currentCount + 1);
+        console.log(`Board state repeated ${currentCount + 1} times. Key: ${newBoardKey}`);
+        // Check for repetition draw immediately after updating history
+        // This check will use the just-updated history.
+        // No, this check must be outside, after setRepetitionHistory has completed.
+        // Or, do the check here based on newHistory before returning it.
+        // For simplicity, it's done in the useEffect hook for board changes.
+        return newHistory;
+    });
 
     setCurrentPlayer(prevPlayer =>
       prevPlayer === PIECE_COLOR.RED ? PIECE_COLOR.BLACK : PIECE_COLOR.RED
     );
-    setPlyCount(prevPly => prevPly + 1); // 每次移动后增加 plyCount
-  }, []); // movePiece 现在是稳定的, setPlyCount 也是稳定的
+    setPlyCount(prevPly => prevPly + 1); 
+  }, []); 
 
   useEffect(() => {
     if (!aiWorkerRef.current) {
       aiWorkerRef.current = new Worker(new URL('./aiWorker.js', import.meta.url));
-
       aiWorkerRef.current.onmessage = (event) => {
-        const { bestMove, error } = event.data; // Check for error too
+        const { bestMove, error } = event.data; 
         if (error) {
           console.error("AI Worker returned an error:", error);
-          // Potentially handle UI feedback for AI error
         } else if (bestMove) {
           movePiece(bestMove.from, bestMove.to);
         } else {
           console.warn("AI Worker returned no best move and no error.");
-          // This might happen if AI determines no legal moves (e.g., stalemate/checkmate detected by AI)
-          // or if there was an unexpected issue.
         }
         setIsAiThinking(false);
       };
-
       aiWorkerRef.current.onerror = (error) => {
         console.error("AI Worker error (onerror):", error);
         setIsAiThinking(false);
       };
     }
-
     return () => {
       if (aiWorkerRef.current) {
         aiWorkerRef.current.terminate();
         aiWorkerRef.current = null;
       }
     };
-  }, [movePiece]);
+  }, [movePiece]); // movePiece is now stable due to useCallback
 
-  const checkForEndGame = useCallback((currentBoard, nextPlayer) => {
+  const checkForEndGame = useCallback((currentBoard, nextPlayer, currentBoardKey, history) => {
+    // 1. Check for repetition draw first
+    if (checkForRepetitionDraw(currentBoardKey, history)) {
+        return true;
+    }
+
+    // 2. Check for checkmate/stalemate
     const legalMoves = generateLegalMoves(currentBoard, nextPlayer);
     if (legalMoves.length === 0) {
       if (isKingInCheck(currentBoard, nextPlayer)) {
@@ -78,30 +120,35 @@ function ChessBoard() {
       return true;
     }
     return false;
-  }, []);
+  }, [checkForRepetitionDraw]); // Added checkForRepetitionDraw dependency
 
   useEffect(() => {
-    if (board && currentPlayer) {
-      checkForEndGame(board, currentPlayer);
+    if (board && currentPlayer && repetitionHistory.size > 0 && !gameOver) { // Ensure repetitionHistory is initialized
+      const currentBoardKey = computeZobristKeyForLocalEngine(board);
+      // Check for game end conditions after board/player/history update
+      // This is called after every move (player or AI) due to dependencies.
+      if (!gameOver) { // Re-check gameOver as it might be set by repetition check inside checkForEndGame
+          checkForEndGame(board, currentPlayer, currentBoardKey, repetitionHistory);
+      }
     }
-  }, [board, currentPlayer, checkForEndGame]);
+  }, [board, currentPlayer, repetitionHistory, checkForEndGame, gameOver]);
 
 
   useEffect(() => {
     if (currentPlayer === PIECE_COLOR.BLACK && !isAiThinking && !gameOver && aiWorkerRef.current) {
       setIsAiThinking(true);
-      // 发送消息时包含 plyCount
+      // Pass a copy of the repetition history to the worker
       aiWorkerRef.current.postMessage({
         board: board,
         currentColor: PIECE_COLOR.BLACK,
-        plyCount: plyCount // 添加 plyCount
+        plyCount: plyCount,
+        repetitionHistory: new Map(repetitionHistory) // Pass history
       });
     }
-    // 将 plyCount 添加到依赖项数组
-  }, [currentPlayer, board, isAiThinking, gameOver, plyCount]);
+  }, [currentPlayer, board, isAiThinking, gameOver, plyCount, repetitionHistory]); // Added repetitionHistory
 
   useEffect(() => {
-    if (selectedPiece && currentPlayer === PIECE_COLOR.RED) { // Ensure only human player can see their moves
+    if (selectedPiece && currentPlayer === PIECE_COLOR.RED) { 
       const moves = generateLegalMoves(board, PIECE_COLOR.RED, selectedPiece);
       setPossibleMoves(moves.map(m => m.to));
     } else {
@@ -134,19 +181,24 @@ function ChessBoard() {
   }, [board, currentPlayer, gameOver, isAiThinking, possibleMoves, selectedPiece, movePiece]);
 
   const handleReset = useCallback(() => {
-    setBoard(getInitialBoard());
+    const initialBrd = getInitialBoard();
+    setBoard(initialBrd);
     setCurrentPlayer(PIECE_COLOR.RED);
     setSelectedPiece(null);
     setPossibleMoves([]);
     setIsAiThinking(false);
     setGameOver('');
-    setPlyCount(0); // 重置时也将 plyCount 设为 0
-    if (aiWorkerRef.current) {
-      // Worker state is generally reset per message for findBestMove,
-      // but if it had persistent state across calls, you might send a reset message.
-      // For this setup, it's usually not needed as findBestMove initializes.
-    }
-  }, []); // setPlyCount is stable
+    setPlyCount(0); 
+    
+    // Reset repetition history for the new game
+    const initialBoardKey = computeZobristKeyForLocalEngine(initialBrd);
+    setRepetitionHistory(() => {
+        const map = new Map();
+        map.set(initialBoardKey, 1);
+        return map;
+    });
+    
+  }, []); 
 
   const getTurnText = () => {
     if (gameOver) return gameOver;
