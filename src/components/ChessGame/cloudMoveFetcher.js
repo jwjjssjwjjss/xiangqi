@@ -3,7 +3,7 @@
 import { PIECE_COLOR, PIECE_TYPES, generateLegalMoves } from './gameLogic'; // 假设 gameLogic.js 在同一目录
 
 let cloudCache = new Map();
-const CLOUD_API_URL = "http://www.chessdb.cn/chessdb.php"; // 确保此地址可访问 (HTTP)
+const CLOUD_API_URL = "https://www.chessdb.cn/chessdb.php"; // 确保此地址可访问 (HTTP)
 const CLOUD_API_TIMEOUT = 800; // API 调用超时时间 (毫秒)
 // CLOUD_API_TIMEOUT_EARLY_GAME 将在 aiWorker.js 中定义和使用
 
